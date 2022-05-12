@@ -1,0 +1,14 @@
+*~
+*#*
+*.pdf
+*.png
+*.log
+log*
+*.root
+*.o
+*.so
+*.pcm
+*.d
+*.ah
+*.optrpt
+*.gdb_history
