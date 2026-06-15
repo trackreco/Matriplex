@@ -10,19 +10,20 @@
 
 namespace Matriplex {
 
-  const idx_t gSymOffsets[7][36] = {{},
-                                    {},
-                                    {0, 1, 1, 2},
-                                    {0, 1, 3, 1, 2, 4, 3, 4, 5},  // 3
-                                    {},
-                                    {},
-                                    {0, 1, 3, 6, 10, 15, 1,  2,  4,  7,  11, 16, 3,  4,  5,  8,  12, 17,
-                                     6, 7, 8, 9, 13, 18, 10, 11, 12, 13, 14, 19, 15, 16, 17, 18, 19, 20}};
+  const idx_t gSymOffsets[7][36] = {
+      {},
+      {},
+      {0, 1, 1, 2},
+      {0, 1, 3, 1, 2, 4, 3, 4, 5},  // 3
+      {},
+      {0, 1, 3, 6, 10, 1, 2, 4, 7, 11, 3, 4, 5, 8, 12, 6, 7, 8, 9, 13, 10, 11, 12, 13, 14},
+      {0, 1, 3, 6, 10, 15, 1,  2,  4,  7,  11, 16, 3,  4,  5,  8,  12, 17,
+       6, 7, 8, 9, 13, 18, 10, 11, 12, 13, 14, 19, 15, 16, 17, 18, 19, 20}};
 
   //------------------------------------------------------------------------------
 
   template <typename T, idx_t D, idx_t N>
-  class MatriplexSym {
+  class __attribute__((aligned(MPLEX_ALIGN))) MatriplexSym {
   public:
     typedef T value_type;
 
@@ -35,7 +36,7 @@ namespace Matriplex {
     /// size of the whole matriplex
     static constexpr int kTotSize = N * kSize;
 
-    T fArray[kTotSize] __attribute__((aligned(64)));
+    T fArray[kTotSize];
 
     MatriplexSym() {}
     MatriplexSym(T v) { setVal(v); }
@@ -60,6 +61,22 @@ namespace Matriplex {
       }
     }
 
+    MatriplexSym& negate() {
+      for (idx_t i = 0; i < kTotSize; ++i) {
+        fArray[i] = -fArray[i];
+      }
+      return *this;
+    }
+
+    template <typename TT>
+    MatriplexSym& negate_if_ltz(const MatriplexSym<TT, D, N>& sign) {
+      for (idx_t i = 0; i < kTotSize; ++i) {
+        if (sign.fArray[i] < 0)
+          fArray[i] = -fArray[i];
+      }
+      return *this;
+    }
+
     T operator[](idx_t xx) const { return fArray[xx]; }
     T& operator[](idx_t xx) { return fArray[xx]; }
 
@@ -73,10 +90,269 @@ namespace Matriplex {
     T& operator()(idx_t n, idx_t i, idx_t j) { return At(n, i, j); }
     const T& operator()(idx_t n, idx_t i, idx_t j) const { return constAt(n, i, j); }
 
+    // reduction/assignment helpers
+
+    using QReduced = Matriplex<T, 1, 1, N>;
+
+    QReduced ReduceFixedIJ(idx_t i, idx_t j) const {
+      QReduced t;
+      for (idx_t n = 0; n < N; ++n) {
+        t[n] = constAt(n, i, j);
+      }
+      return t;
+    }
+    QReduced rij(idx_t i, idx_t j) const { return ReduceFixedIJ(i, j); }
+    QReduced operator()(idx_t i, idx_t j) const { return ReduceFixedIJ(i, j); }
+
+    struct QAssigner {
+      MatriplexSym& m_matriplex;
+      const int m_i, m_j;
+
+      QAssigner(MatriplexSym& m, int i, int j) : m_matriplex(m), m_i(i), m_j(j) {}
+      MatriplexSym& operator=(const QReduced& qvec) {
+        for (idx_t n = 0; n < N; ++n) {
+          m_matriplex(n, m_i, m_j) = qvec[n];
+        }
+        return m_matriplex;
+      }
+      MatriplexSym& operator=(T qscalar) {
+        for (idx_t n = 0; n < N; ++n) {
+          m_matriplex(n, m_i, m_j) = qscalar;
+        }
+        return m_matriplex;
+      }
+    };
+
+    QAssigner AssignFixedIJ(idx_t i, idx_t j) { return QAssigner(*this, i, j); }
+    QAssigner aij(idx_t i, idx_t j) { return AssignFixedIJ(i, j); }
+
     MatriplexSym& operator=(const MatriplexSym& m) {
       memcpy(fArray, m.fArray, sizeof(T) * kTotSize);
       return *this;
     }
+
+    MatriplexSym(const MatriplexSym& m) = default;
+
+    MatriplexSym& operator=(T t) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = t;
+      return *this;
+    }
+
+    MatriplexSym& operator+=(T t) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] += t;
+      return *this;
+    }
+
+    MatriplexSym& operator-=(T t) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] -= t;
+      return *this;
+    }
+
+    MatriplexSym& operator*=(T t) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] *= t;
+      return *this;
+    }
+
+    MatriplexSym& operator/=(T t) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] /= t;
+      return *this;
+    }
+
+    MatriplexSym& operator+=(const MatriplexSym& a) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] += a.fArray[i];
+      return *this;
+    }
+
+    MatriplexSym& operator-=(const MatriplexSym& a) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] -= a.fArray[i];
+      return *this;
+    }
+
+    MatriplexSym& operator*=(const MatriplexSym& a) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] *= a.fArray[i];
+      return *this;
+    }
+
+    MatriplexSym& operator/=(const MatriplexSym& a) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] /= a.fArray[i];
+      return *this;
+    }
+
+    MatriplexSym operator-() {
+      MatriplexSym t;
+      for (idx_t i = 0; i < kTotSize; ++i)
+        t.fArray[i] = -fArray[i];
+      return t;
+    }
+
+    MatriplexSym& abs(const MatriplexSym& a) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::abs(a.fArray[i]);
+      return *this;
+    }
+    MatriplexSym& abs() {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::abs(fArray[i]);
+      return *this;
+    }
+
+    MatriplexSym& sqr(const MatriplexSym& a) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = a.fArray[i] * a.fArray[i];
+      return *this;
+    }
+    MatriplexSym& sqr() {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = fArray[i] * fArray[i];
+      return *this;
+    }
+
+    MatriplexSym& sqrt(const MatriplexSym& a) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::sqrt(a.fArray[i]);
+      return *this;
+    }
+    MatriplexSym& sqrt() {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::sqrt(fArray[i]);
+      return *this;
+    }
+
+    MatriplexSym& hypot(const MatriplexSym& a, const MatriplexSym& b) {
+      for (idx_t i = 0; i < kTotSize; ++i) {
+        fArray[i] = a.fArray[i] * a.fArray[i] + b.fArray[i] * b.fArray[i];
+      }
+      return sqrt();
+    }
+
+    MatriplexSym& sin(const MatriplexSym& a) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::sin(a.fArray[i]);
+      return *this;
+    }
+    MatriplexSym& sin() {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::sin(fArray[i]);
+      return *this;
+    }
+
+    MatriplexSym& cos(const MatriplexSym& a) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::cos(a.fArray[i]);
+      return *this;
+    }
+    MatriplexSym& cos() {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::cos(fArray[i]);
+      return *this;
+    }
+
+    MatriplexSym& tan(const MatriplexSym& a) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::tan(a.fArray[i]);
+      return *this;
+    }
+    MatriplexSym& tan() {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::tan(fArray[i]);
+      return *this;
+    }
+
+    MatriplexSym& atan2(const MatriplexSym& y, const MatriplexSym& x) {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        fArray[i] = std::atan2(y.fArray[i], x.fArray[i]);
+      return *this;
+    }
+
+    void sincos(MatriplexSym& s, MatriplexSym& c) const {
+      for (idx_t i = 0; i < kTotSize; ++i) {
+        s.fArray[i] = std::sin(fArray[i]);
+        c.fArray[i] = std::cos(fArray[i]);
+      }
+    }
+
+    void sincos4(MatriplexSym& s, MatriplexSym& c) const {
+      for (idx_t i = 0; i < kTotSize; ++i)
+        internal::sincos4(fArray[i], s.fArray[i], c.fArray[i]);
+    }
+
+#ifdef MPLEX_VDT
+
+#define ASS fArray[i] =
+#define ARR fArray[i]
+#define A_ARR a.fArray[i]
+
+#ifdef MPLEX_VDT_USE_STD
+#define VDT_INVOKE(_ass_, _func_, ...) \
+  for (idx_t i = 0; i < kTotSize; ++i) \
+    _ass_ std::_func_(__VA_ARGS__);
+#else
+#define VDT_INVOKE(_ass_, _func_, ...)          \
+  for (idx_t i = 0; i < kTotSize; ++i)          \
+    if constexpr (std::is_same<T, float>())     \
+      _ass_ vdt::fast_##_func_##f(__VA_ARGS__); \
+    else                                        \
+      _ass_ vdt::fast_##_func_(__VA_ARGS__);
+#endif
+
+    MatriplexSym& fast_isqrt(const MatriplexSym& a) {
+      VDT_INVOKE(ASS, isqrt, A_ARR);
+      return *this;
+    }
+    MatriplexSym& fast_isqrt() {
+      VDT_INVOKE(ASS, isqrt, ARR);
+      return *this;
+    }
+
+    MatriplexSym& fast_sin(const MatriplexSym& a) {
+      VDT_INVOKE(ASS, sin, A_ARR);
+      return *this;
+    }
+    MatriplexSym& fast_sin() {
+      VDT_INVOKE(ASS, sin, ARR);
+      return *this;
+    }
+
+    MatriplexSym& fast_cos(const MatriplexSym& a) {
+      VDT_INVOKE(ASS, cos, A_ARR);
+      return *this;
+    }
+    MatriplexSym& fast_cos() {
+      VDT_INVOKE(ASS, cos, ARR);
+      return *this;
+    }
+
+    void fast_sincos(MatriplexSym& s, MatriplexSym& c) const { VDT_INVOKE(, sincos, ARR, s.fArray[i], c.fArray[i]); }
+
+    MatriplexSym& fast_tan(const MatriplexSym& a) {
+      VDT_INVOKE(ASS, tan, A_ARR);
+      return *this;
+    }
+    MatriplexSym& fast_tan() {
+      VDT_INVOKE(ASS, tan, ARR);
+      return *this;
+    }
+
+    MatriplexSym& fast_atan2(const MatriplexSym& y, const MatriplexSym& x) {
+      VDT_INVOKE(ASS, atan2, y.fArray[i], x.fArray[i]);
+      return *this;
+    }
+
+#undef VDT_INVOKE
+
+#undef ASS
+#undef ARR
+#undef A_ARR
+#endif
 
     void copySlot(idx_t n, const MatriplexSym& m) {
       for (idx_t i = n; i < kTotSize; i += N) {
@@ -263,10 +539,254 @@ namespace Matriplex {
         a[5 * N + n] = s * c22;
       }
     }
+
   };
 
   template <typename T, idx_t D, idx_t N>
   using MPlexSym = MatriplexSym<T, D, N>;
+
+  //==============================================================================
+  // Operators
+  //==============================================================================
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator-(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t = a;
+    t.negate();
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> negate(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t = a;
+    t.negate();
+    return t;
+  }
+
+  template <typename T, typename TT, idx_t D, idx_t N>
+  MPlexSym<T, D, N> negate_if_ltz(const MPlexSym<T, D, N>& a, const MPlexSym<TT, D, N>& sign) {
+    MPlexSym<T, D, N> t = a;
+    t.negate_if_ltz(sign);
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator+(const MPlexSym<T, D, N>& a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t = a;
+    t += b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator-(const MPlexSym<T, D, N>& a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t = a;
+    t -= b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator*(const MPlexSym<T, D, N>& a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t = a;
+    t *= b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator/(const MPlexSym<T, D, N>& a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t = a;
+    t /= b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator+(const MPlexSym<T, D, N>& a, T b) {
+    MPlexSym<T, D, N> t = a;
+    t += b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator-(const MPlexSym<T, D, N>& a, T b) {
+    MPlexSym<T, D, N> t = a;
+    t -= b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator*(const MPlexSym<T, D, N>& a, T b) {
+    MPlexSym<T, D, N> t = a;
+    t *= b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator/(const MPlexSym<T, D, N>& a, T b) {
+    MPlexSym<T, D, N> t = a;
+    t /= b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator+(T a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t = a;
+    t += b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator-(T a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t = a;
+    t -= b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator*(T a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t = a;
+    t *= b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> operator/(T a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t = a;
+    t /= b;
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> abs(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t;
+    return t.abs(a);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> sqr(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t;
+    return t.sqr(a);
+  }
+
+  //---------------------------------------------------------
+  // transcendentals, std version
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> sqrt(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t;
+    return t.sqrt(a);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> hypot(const MPlexSym<T, D, N>& a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t;
+    return t.hypot(a, b);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> sin(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t;
+    return t.sin(a);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> cos(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t;
+    return t.cos(a);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  void sincos(const MPlexSym<T, D, N>& a, MPlexSym<T, D, N>& s, MPlexSym<T, D, N>& c) {
+    a.sincos(s, c);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> tan(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t;
+    return t.tan(a);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> atan2(const MPlexSym<T, D, N>& y, const MPlexSym<T, D, N>& x) {
+    MPlexSym<T, D, N> t;
+    return t.atan2(y, x);
+  }
+
+  //---------------------------------------------------------
+  // transcendentals, vdt version
+
+#ifdef MPLEX_VDT
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> fast_isqrt(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t;
+    return t.fast_isqrt(a);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> fast_sin(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t;
+    return t.fast_sin(a);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> fast_cos(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t;
+    return t.fast_cos(a);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  void fast_sincos(const MPlexSym<T, D, N>& a, MPlexSym<T, D, N>& s, MPlexSym<T, D, N>& c) {
+    a.fast_sincos(s, c);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> fast_tan(const MPlexSym<T, D, N>& a) {
+    MPlexSym<T, D, N> t;
+    return t.fast_tan(a);
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> fast_atan2(const MPlexSym<T, D, N>& y, const MPlexSym<T, D, N>& x) {
+    MPlexSym<T, D, N> t;
+    return t.fast_atan2(y, x);
+  }
+
+#endif
+
+  template <typename T, idx_t D, idx_t N>
+  void sincos4(const MPlexSym<T, D, N>& a, MPlexSym<T, D, N>& s, MPlexSym<T, D, N>& c) {
+    a.sincos4(s, c);
+  }
+
+  //---------------------------------------------------------
+
+  template <typename T, idx_t D, idx_t N>
+  void min_max(const MPlexSym<T, D, N>& a,
+               const MPlexSym<T, D, N>& b,
+               MPlexSym<T, D, N>& min,
+               MPlexSym<T, D, N>& max) {
+    for (idx_t i = 0; i < a.kTotSize; ++i) {
+      min.fArray[i] = std::min(a.fArray[i], b.fArray[i]);
+      max.fArray[i] = std::max(a.fArray[i], b.fArray[i]);
+    }
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> min(const MPlexSym<T, D, N>& a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t;
+    for (idx_t i = 0; i < a.kTotSize; ++i) {
+      t.fArray[i] = std::min(a.fArray[i], b.fArray[i]);
+    }
+    return t;
+  }
+
+  template <typename T, idx_t D, idx_t N>
+  MPlexSym<T, D, N> max(const MPlexSym<T, D, N>& a, const MPlexSym<T, D, N>& b) {
+    MPlexSym<T, D, N> t;
+    for (idx_t i = 0; i < a.kTotSize; ++i) {
+      t.fArray[i] = std::max(a.fArray[i], b.fArray[i]);
+    }
+    return t;
+  }
 
   //==============================================================================
   // Multiplications
